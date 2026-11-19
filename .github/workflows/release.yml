@@ -1,0 +1,93 @@
+name: Release macOS
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag da pubblicare, es. v0.1.0 (viene creato se non esiste)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build universale e release
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain Rust (Apple Silicon + Intel)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compila per Apple Silicon
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Compila per Intel
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Unisci in un binario universale
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/paintcp \
+            target/x86_64-apple-darwin/release/paintcp \
+            -output dist/PaintCP
+          lipo -archs dist/PaintCP
+
+      - name: Crea PaintCP.app
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          PAINTCP_VERSION="${TAG#v}" ./scripts/bundle-app.sh dist/PaintCP dist
+
+      - name: Prepara ZIP, DMG e checksum
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${TAG#v}"
+
+          ditto -c -k --sequesterRsrc --keepParent dist/PaintCP.app \
+            "dist/PaintCP-$VERSION-macos-universal.zip"
+
+          STAGE="$RUNNER_TEMP/dmg"
+          mkdir -p "$STAGE"
+          cp -R dist/PaintCP.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applicazioni"
+          hdiutil create -volname "PaintCP" -srcfolder "$STAGE" -ov -format UDZO \
+            "dist/PaintCP-$VERSION.dmg"
+
+          cd dist
+          shasum -a 256 ./*.zip ./*.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Pubblica la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${TAG#v}"
+          ASSETS="dist/PaintCP-$VERSION-macos-universal.zip dist/PaintCP-$VERSION.dmg dist/SHA256SUMS.txt"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $ASSETS --clobber
+          else
+            gh release create "$TAG" $ASSETS \
+              --title "PaintCP $VERSION" \
+              --notes-file .github/release-notes.md \
+              --target "$GITHUB_SHA"
+          fi
