@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ github.event.inputs.version || github.ref_name }}"
-          PAINTCP_VERSION="${TAG#v}" ./scripts/bundle-app.sh dist/PaintCP dist
+          PAINTCP_VERSION="${TAG#v}" bash scripts/bundle-app.sh dist/PaintCP dist
 
       - name: Prepara ZIP, DMG e checksum
         run: |
