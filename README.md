@@ -72,6 +72,13 @@ che si vede sulla tela e quello che viene salvato nel PNG, trasparenze comprese 
 mostrate con una scacchiera). Aggiunte, eliminazioni, spostamenti, unioni e cambi di opacità
 entrano nella cronologia di Annulla/Ripeti.
 
+## Lingua
+
+Il pulsante **⚙ Impostazioni** nella barra in alto apre una finestra con la scelta della lingua:
+**Italiano** (predefinita) o **English**. Il cambio è immediato e vale per tutta l'interfaccia
+(pulsanti, strumenti, pannello dei livelli, barra di stato e finestra di conferma); i testi
+stanno tutti in `src/i18n.rs`.
+
 ## Scorciatoie
 
 | Scorciatoia | Azione |
@@ -91,6 +98,7 @@ continuare, scartare o annullare. Lo stato "● modifiche non salvate" è nella 
 ```
 src/main.rs    finestra e avvio dell'app
 src/app.rs     interfaccia, strumenti, livelli, gestione tratti e file
+src/i18n.rs    testi dell'interfaccia in italiano e inglese
 src/paint.rs   disegno sui pixel (linee, rettangoli, ellissi, riempimento, fluidifica)
 scripts/build-app.sh   compila e crea PaintCP.app per il Mac corrente
 scripts/bundle-app.sh  crea PaintCP.app da un binario (usato anche dalla CI)
