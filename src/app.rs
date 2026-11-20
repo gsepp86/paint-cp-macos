@@ -3,11 +3,12 @@
 use std::path::PathBuf;
 
 use eframe::egui::{
-    self, Align, Color32, ColorImage, CornerRadius, CursorIcon, Key, KeyboardShortcut, Layout,
-    Modifiers, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions,
-    Vec2,
+    self, Align, Align2, Color32, ColorImage, CornerRadius, CursorIcon, Key, KeyboardShortcut,
+    Layout, Modifiers, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle,
+    TextureOptions, Vec2,
 };
 
+use crate::i18n::{Lang, Texts};
 use crate::paint;
 
 const CANVAS_W: usize = 1024;
@@ -61,32 +62,27 @@ impl Tool {
         Tool::Liquify,
     ];
 
-    fn label(self) -> &'static str {
+    /// Posizione nei vettori `Texts::tools` e `Texts::tool_hints`.
+    fn index(self) -> usize {
         match self {
-            Tool::Pencil => "Matita",
-            Tool::Eraser => "Gomma",
-            Tool::Line => "Linea",
-            Tool::Rect => "Rettangolo",
-            Tool::RectFilled => "Rettangolo pieno",
-            Tool::Ellipse => "Ellisse",
-            Tool::EllipseFilled => "Ellisse piena",
-            Tool::Fill => "Secchio",
-            Tool::Liquify => "Fluidifica",
+            Tool::Pencil => 0,
+            Tool::Eraser => 1,
+            Tool::Line => 2,
+            Tool::Rect => 3,
+            Tool::RectFilled => 4,
+            Tool::Ellipse => 5,
+            Tool::EllipseFilled => 6,
+            Tool::Fill => 7,
+            Tool::Liquify => 8,
         }
     }
 
-    fn hint(self) -> &'static str {
-        match self {
-            Tool::Pencil => "Tratto a mano libera",
-            Tool::Eraser => "Cancella il livello attivo (trasparente)",
-            Tool::Line => "Linea dritta, con anteprima",
-            Tool::Rect => "Rettangolo vuoto, con anteprima",
-            Tool::RectFilled => "Rettangolo pieno, con anteprima",
-            Tool::Ellipse => "Ellisse vuota, con anteprima",
-            Tool::EllipseFilled => "Ellisse piena, con anteprima",
-            Tool::Fill => "Riempie l'area contigua dello stesso colore",
-            Tool::Liquify => "Trascina e deforma i pixel del livello attivo",
-        }
+    fn label(self, texts: &Texts) -> &'static str {
+        texts.tools[self.index()]
+    }
+
+    fn hint(self, texts: &Texts) -> &'static str {
+        texts.tool_hints[self.index()]
     }
 
     /// Le forme vengono ridisegnate da zero a ogni movimento (anteprima).
@@ -187,6 +183,60 @@ enum PendingAction {
     Open,
 }
 
+/// Messaggio della barra di stato. È un valore e non una stringa già tradotta,
+/// così cambiando lingua nella finestra *Impostazioni* si aggiorna subito.
+enum Status {
+    Ready,
+    Undone,
+    Redone,
+    Filled,
+    StrokeDone,
+    NewLayer,
+    LayerDuplicated,
+    NeedOneLayer,
+    LayerDeleted,
+    LayerMovedUp,
+    LayerMovedDown,
+    NothingToMerge,
+    LayersMerged,
+    LayerShown,
+    LayerHidden,
+    NewCanvas,
+    MaxLayers(usize),
+    Opened(String),
+    Saved(String),
+    Opacity(i32),
+    Error(String),
+}
+
+impl Status {
+    fn text(&self, texts: &Texts) -> String {
+        match self {
+            Status::Ready => texts.status_ready.to_owned(),
+            Status::Undone => texts.status_undo.to_owned(),
+            Status::Redone => texts.status_redo.to_owned(),
+            Status::Filled => texts.status_filled.to_owned(),
+            Status::StrokeDone => texts.status_stroke_done.to_owned(),
+            Status::NewLayer => texts.status_new_layer.to_owned(),
+            Status::LayerDuplicated => texts.status_layer_duplicated.to_owned(),
+            Status::NeedOneLayer => texts.status_need_layer.to_owned(),
+            Status::LayerDeleted => texts.status_layer_deleted.to_owned(),
+            Status::LayerMovedUp => texts.status_layer_up.to_owned(),
+            Status::LayerMovedDown => texts.status_layer_down.to_owned(),
+            Status::NothingToMerge => texts.status_nothing_to_merge.to_owned(),
+            Status::LayersMerged => texts.status_layers_merged.to_owned(),
+            Status::LayerShown => texts.status_layer_shown.to_owned(),
+            Status::LayerHidden => texts.status_layer_hidden.to_owned(),
+            Status::NewCanvas => texts.status_new_canvas.to_owned(),
+            Status::MaxLayers(max) => texts.max_layers(*max),
+            Status::Opened(name) => texts.opened(name),
+            Status::Saved(name) => texts.saved(name),
+            Status::Opacity(percent) => texts.opacity(*percent),
+            Status::Error(message) => message.clone(),
+        }
+    }
+}
+
 pub struct PaintApp {
     layers: Vec<Layer>,
     active: usize,
@@ -208,7 +258,9 @@ pub struct PaintApp {
     path: Option<PathBuf>,
     modified: bool,
     pending: Option<PendingAction>,
-    status: String,
+    status: Status,
+    lang: Lang,
+    settings_open: bool,
 }
 
 impl PaintApp {
@@ -218,8 +270,12 @@ impl PaintApp {
             style.spacing.item_spacing = Vec2::new(6.0, 4.0);
         });
 
+        let lang = Lang::Italian;
         Self {
-            layers: vec![Layer::new("Sfondo", paint::blank(CANVAS_W, CANVAS_H))],
+            layers: vec![Layer::new(
+                lang.texts().background_layer,
+                paint::blank(CANVAS_W, CANVAS_H),
+            )],
             active: 0,
             layer_counter: 1,
             composite: paint::blank(CANVAS_W, CANVAS_H),
@@ -238,8 +294,14 @@ impl PaintApp {
             path: None,
             modified: false,
             pending: None,
-            status: "Pronto".to_owned(),
+            status: Status::Ready,
+            lang,
+            settings_open: false,
         }
+    }
+
+    fn texts(&self) -> &'static Texts {
+        self.lang.texts()
     }
 
     // --- Livelli e composizione ---------------------------------------------
@@ -379,7 +441,7 @@ impl PaintApp {
         }
         self.stroke = None;
         self.mark_dirty();
-        self.status = "Annullato".to_owned();
+        self.status = Status::Undone;
     }
 
     fn redo(&mut self) {
@@ -392,7 +454,7 @@ impl PaintApp {
         }
         self.stroke = None;
         self.mark_dirty();
-        self.status = "Ripetuto".to_owned();
+        self.status = Status::Redone;
     }
 
     /// Copia dello stato dei livelli, per le modifiche strutturali.
@@ -418,7 +480,7 @@ impl PaintApp {
                 paint::flood_fill(&mut layer.image, at, self.color);
             }
             self.mark_dirty();
-            self.status = "Riempimento".to_owned();
+            self.status = Status::Filled;
             return;
         }
 
@@ -482,7 +544,7 @@ impl PaintApp {
 
     fn end_stroke(&mut self) {
         if self.stroke.take().is_some() {
-            self.status = "Disegno completato".to_owned();
+            self.status = Status::StrokeDone;
         }
     }
 
@@ -490,12 +552,12 @@ impl PaintApp {
 
     fn next_layer_name(&mut self) -> String {
         self.layer_counter += 1;
-        format!("Livello {}", self.layer_counter)
+        format!("{} {}", self.texts().layer_word, self.layer_counter)
     }
 
     fn add_layer(&mut self) {
         if self.layers.len() >= MAX_LAYERS {
-            self.status = format!("Massimo {MAX_LAYERS} livelli");
+            self.status = Status::MaxLayers(MAX_LAYERS);
             return;
         }
         self.record(self.stack_snapshot());
@@ -506,19 +568,19 @@ impl PaintApp {
             .insert(index, Layer::new(name, paint::transparent(w, h)));
         self.active = index;
         self.mark_dirty();
-        self.status = "Nuovo livello".to_owned();
+        self.status = Status::NewLayer;
     }
 
     fn duplicate_layer(&mut self) {
         if self.layers.len() >= MAX_LAYERS {
-            self.status = format!("Massimo {MAX_LAYERS} livelli");
+            self.status = Status::MaxLayers(MAX_LAYERS);
             return;
         }
         let Some(source) = self.layers.get(self.active) else {
             return;
         };
         let copy = Layer {
-            name: format!("{} copia", source.name),
+            name: format!("{} {}", source.name, self.texts().copy_suffix),
             image: source.image.clone(),
             visible: source.visible,
             opacity: source.opacity,
@@ -528,19 +590,19 @@ impl PaintApp {
         self.layers.insert(index, copy);
         self.active = index;
         self.mark_dirty();
-        self.status = "Livello duplicato".to_owned();
+        self.status = Status::LayerDuplicated;
     }
 
     fn delete_layer(&mut self) {
         if self.layers.len() <= 1 {
-            self.status = "Serve almeno un livello".to_owned();
+            self.status = Status::NeedOneLayer;
             return;
         }
         self.record(self.stack_snapshot());
         self.layers.remove(self.active);
         self.active = self.active.min(self.layers.len() - 1);
         self.mark_dirty();
-        self.status = "Livello eliminato".to_owned();
+        self.status = Status::LayerDeleted;
     }
 
     fn move_layer(&mut self, offset: isize) {
@@ -553,16 +615,16 @@ impl PaintApp {
         self.active = target as usize;
         self.mark_dirty();
         self.status = if offset > 0 {
-            "Livello spostato sopra".to_owned()
+            Status::LayerMovedUp
         } else {
-            "Livello spostato sotto".to_owned()
+            Status::LayerMovedDown
         };
     }
 
     /// Unisce il livello attivo in quello sottostante.
     fn merge_down(&mut self) {
         if self.active == 0 {
-            self.status = "Nessun livello sotto da unire".to_owned();
+            self.status = Status::NothingToMerge;
             return;
         }
         self.record(self.stack_snapshot());
@@ -577,7 +639,7 @@ impl PaintApp {
         self.layers.remove(index);
         self.active = index - 1;
         self.mark_dirty();
-        self.status = "Livelli uniti".to_owned();
+        self.status = Status::LayersMerged;
     }
 
     fn set_layer_visible(&mut self, index: usize, visible: bool) {
@@ -597,9 +659,9 @@ impl PaintApp {
         }
         self.mark_dirty();
         self.status = if visible {
-            "Livello visibile".to_owned()
+            Status::LayerShown
         } else {
-            "Livello nascosto".to_owned()
+            Status::LayerHidden
         };
     }
 
@@ -621,7 +683,11 @@ impl PaintApp {
     }
 
     fn new_canvas(&mut self) {
-        self.layers = vec![Layer::new("Sfondo", paint::blank(CANVAS_W, CANVAS_H))];
+        let background = self.texts().background_layer;
+        self.layers = vec![Layer::new(
+            background,
+            paint::blank(CANVAS_W, CANVAS_H),
+        )];
         self.active = 0;
         self.layer_counter = 1;
         self.undo.clear();
@@ -630,20 +696,21 @@ impl PaintApp {
         self.path = None;
         self.mark_dirty();
         self.modified = false;
-        self.status = "Nuovo foglio".to_owned();
+        self.status = Status::NewCanvas;
     }
 
     fn open(&mut self) {
+        let texts = self.texts();
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Immagini", &["png", "jpg", "jpeg", "bmp"])
+            .add_filter(texts.images_filter, &["png", "jpg", "jpeg", "bmp"])
             .pick_file()
         else {
             return;
         };
 
-        match load_image(&path) {
+        match load_image(&path, texts) {
             Ok(image) => {
-                self.layers = vec![Layer::new("Sfondo", image)];
+                self.layers = vec![Layer::new(texts.background_layer, image)];
                 self.active = 0;
                 self.layer_counter = 1;
                 self.undo.clear();
@@ -652,9 +719,9 @@ impl PaintApp {
                 self.path = Some(path.clone());
                 self.mark_dirty();
                 self.modified = false;
-                self.status = format!("Aperto: {}", file_name(&path));
+                self.status = Status::Opened(file_name(&path));
             }
-            Err(message) => self.status = message,
+            Err(message) => self.status = Status::Error(message),
         }
     }
 
@@ -662,10 +729,11 @@ impl PaintApp {
     fn save(&mut self, save_as: bool) -> bool {
         self.ensure_composite();
 
+        let texts = self.texts();
         let path = if save_as { None } else { self.path.clone() };
         let path = path.or_else(|| {
             rfd::FileDialog::new()
-                .add_filter("Immagine PNG", &["png"])
+                .add_filter(texts.png_filter, &["png"])
                 .set_file_name(self.suggested_name())
                 .save_file()
         });
@@ -677,21 +745,17 @@ impl PaintApp {
         let is_png = path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
-        let path = if is_png {
-            path
-        } else {
-            path.with_extension("png")
-        };
+        let path = if is_png { path } else { path.with_extension("png") };
 
-        match save_png(&self.composite, &path) {
+        match save_png(&self.composite, &path, texts) {
             Ok(()) => {
-                self.status = format!("Salvato: {}", file_name(&path));
+                self.status = Status::Saved(file_name(&path));
                 self.path = Some(path);
                 self.modified = false;
                 true
             }
             Err(message) => {
-                self.status = message;
+                self.status = Status::Error(message);
                 false
             }
         }
@@ -702,7 +766,7 @@ impl PaintApp {
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "disegno.png".to_owned())
+            .unwrap_or_else(|| self.texts().default_file.to_owned())
     }
 
     // --- Interfaccia -------------------------------------------------------
@@ -744,31 +808,33 @@ impl PaintApp {
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
+        let t = *self.texts();
+
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Nuovo").clicked() {
+            if ui.button(t.new_canvas).clicked() {
                 self.request(PendingAction::New);
             }
-            if ui.button("Apri…").clicked() {
+            if ui.button(t.open).clicked() {
                 self.request(PendingAction::Open);
             }
-            if ui.button("Salva").clicked() {
+            if ui.button(t.save).clicked() {
                 self.save(false);
             }
-            if ui.button("Salva con nome…").clicked() {
+            if ui.button(t.save_as).clicked() {
                 self.save(true);
             }
 
             ui.separator();
 
             if ui
-                .add_enabled(!self.undo.is_empty(), egui::Button::new("↶ Annulla"))
+                .add_enabled(!self.undo.is_empty(), egui::Button::new(t.undo))
                 .clicked()
             {
                 self.undo();
             }
             if ui
-                .add_enabled(!self.redo.is_empty(), egui::Button::new("↷ Ripeti"))
+                .add_enabled(!self.redo.is_empty(), egui::Button::new(t.redo))
                 .clicked()
             {
                 self.redo();
@@ -776,11 +842,11 @@ impl PaintApp {
 
             ui.separator();
 
-            ui.label("Colore:");
+            ui.label(t.color);
             ui.color_edit_button_srgba(&mut self.color);
 
             ui.add_space(4.0);
-            ui.label("Spessore:");
+            ui.label(t.width);
             ui.add(
                 egui::Slider::new(&mut self.brush, 1.0..=48.0)
                     .integer()
@@ -789,18 +855,24 @@ impl PaintApp {
 
             if self.tool == Tool::Liquify {
                 ui.add_space(4.0);
-                ui.label("Intensità:");
+                ui.label(t.strength);
                 ui.add(egui::Slider::new(&mut self.liquify_strength, 0.1..=1.0).max_decimals(2));
+            }
+
+            ui.separator();
+
+            if ui.button(format!("⚙ {}", t.settings)).clicked() {
+                self.settings_open = true;
             }
         });
 
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label("Strumento:");
+            ui.label(t.tool);
             for tool in Tool::ALL {
                 if ui
-                    .selectable_label(self.tool == tool, tool.label())
-                    .on_hover_text(tool.hint())
+                    .selectable_label(self.tool == tool, tool.label(&t))
+                    .on_hover_text(tool.hint(&t))
                     .clicked()
                 {
                     self.tool = tool;
@@ -810,7 +882,7 @@ impl PaintApp {
 
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label("Tavolozza:");
+            ui.label(t.palette);
             for color in PALETTE {
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
                 let painter = ui.painter();
@@ -826,7 +898,7 @@ impl PaintApp {
                     border,
                     StrokeKind::Inside,
                 );
-                if response.on_hover_text("Usa questo colore").clicked() {
+                if response.on_hover_text(t.pick_color).clicked() {
                     self.color = color;
                 }
             }
@@ -834,30 +906,72 @@ impl PaintApp {
         ui.add_space(2.0);
     }
 
+    /// Finestra *Impostazioni*: per ora contiene la scelta della lingua.
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+
+        let t = *self.texts();
+        let mut open = true;
+        let mut close_requested = false;
+
+        egui::Window::new(t.settings)
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_width(280.0);
+                ui.label(t.language);
+                ui.horizontal(|ui| {
+                    for lang in Lang::ALL {
+                        if ui
+                            .selectable_label(self.lang == lang, lang.name())
+                            .clicked()
+                        {
+                            self.lang = lang;
+                        }
+                    }
+                });
+                ui.weak(t.language_hint);
+                ui.separator();
+                if ui.button(t.close).clicked() {
+                    close_requested = true;
+                }
+            });
+
+        if !open || close_requested {
+            self.settings_open = false;
+        }
+    }
+
     fn layers_panel(&mut self, ui: &mut egui::Ui) {
+        let t = *self.texts();
+
         ui.add_space(4.0);
-        ui.label(RichText::new("Livelli").strong());
+        ui.label(RichText::new(t.layers).strong());
         ui.add_space(2.0);
 
         ui.horizontal_wrapped(|ui| {
             let can_add = self.layers.len() < MAX_LAYERS;
             if ui
-                .add_enabled(can_add, egui::Button::new("Nuovo"))
-                .on_hover_text("Aggiunge un livello trasparente sopra quello attivo")
+                .add_enabled(can_add, egui::Button::new(t.layer_new))
+                .on_hover_text(t.hint_add_layer)
                 .clicked()
             {
                 self.add_layer();
             }
             if ui
-                .add_enabled(can_add, egui::Button::new("Duplica"))
-                .on_hover_text("Copia il livello attivo")
+                .add_enabled(can_add, egui::Button::new(t.layer_duplicate))
+                .on_hover_text(t.hint_duplicate_layer)
                 .clicked()
             {
                 self.duplicate_layer();
             }
             if ui
-                .add_enabled(self.layers.len() > 1, egui::Button::new("Elimina"))
-                .on_hover_text("Elimina il livello attivo")
+                .add_enabled(self.layers.len() > 1, egui::Button::new(t.layer_delete))
+                .on_hover_text(t.hint_delete_layer)
                 .clicked()
             {
                 self.delete_layer();
@@ -867,21 +981,21 @@ impl PaintApp {
                     self.active + 1 < self.layers.len(),
                     egui::Button::new("▲").small(),
                 )
-                .on_hover_text("Sposta sopra")
+                .on_hover_text(t.hint_move_up)
                 .clicked()
             {
                 self.move_layer(1);
             }
             if ui
                 .add_enabled(self.active > 0, egui::Button::new("▼").small())
-                .on_hover_text("Sposta sotto")
+                .on_hover_text(t.hint_move_down)
                 .clicked()
             {
                 self.move_layer(-1);
             }
             if ui
-                .add_enabled(self.active > 0, egui::Button::new("Unisci"))
-                .on_hover_text("Unisce il livello attivo a quello sotto")
+                .add_enabled(self.active > 0, egui::Button::new(t.layer_merge))
+                .on_hover_text(t.hint_merge_layer)
                 .clicked()
             {
                 self.merge_down();
@@ -905,14 +1019,14 @@ impl PaintApp {
                         let mut visible = layer.visible;
                         if ui
                             .checkbox(&mut visible, "")
-                            .on_hover_text("Mostra o nascondi il livello")
+                            .on_hover_text(t.hint_visible)
                             .changed()
                         {
                             toggle = Some((index, visible));
                         }
                         if ui
                             .selectable_label(index == self.active, &layer.name)
-                            .on_hover_text("Seleziona il livello")
+                            .on_hover_text(t.hint_select)
                             .clicked()
                         {
                             select = Some(index);
@@ -944,7 +1058,7 @@ impl PaintApp {
                     .integer()
                     .suffix(" %"),
             );
-            let _ = ui.weak("Opacità del livello");
+            let _ = ui.weak(t.layer_opacity);
             if response.changed() {
                 if response.drag_started() || !response.dragged() {
                     self.record(Change::Attrs { index, before });
@@ -953,13 +1067,15 @@ impl PaintApp {
                     layer.opacity = percent / 100.0;
                 }
                 self.mark_dirty();
-                self.status = format!("Opacità {}%", percent.round() as i32);
+                self.status = Status::Opacity(percent.round() as i32);
             }
         }
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         let [w, h] = self.canvas_size();
+        let t = *self.texts();
+
         ui.horizontal(|ui| {
             ui.label(format!("{w} × {h} px"));
             ui.separator();
@@ -968,9 +1084,9 @@ impl PaintApp {
                 .get(self.active)
                 .map(|layer| layer.name.as_str())
                 .unwrap_or("-");
-            ui.label(format!("Livello: {layer_name}"));
+            ui.label(format!("{} {layer_name}", t.layer_word));
             ui.separator();
-            ui.label(format!("Strumento: {}", self.tool.label()));
+            ui.label(format!("{} {}", t.tool, self.tool.label(&t)));
 
             if let (Some(view), Some(pointer)) =
                 (self.view, ui.ctx().input(|i| i.pointer.hover_pos()))
@@ -985,13 +1101,13 @@ impl PaintApp {
                 if let Some(path) = &self.path {
                     ui.label(file_name(path));
                 } else {
-                    ui.weak("non salvato");
+                    ui.weak(t.unsaved);
                 }
                 ui.separator();
-                ui.label(&self.status);
+                ui.label(self.status.text(&t));
                 if self.modified {
                     ui.separator();
-                    ui.colored_label(Color32::from_rgb(190, 90, 0), "● modifiche non salvate");
+                    ui.colored_label(Color32::from_rgb(190, 90, 0), t.unsaved_changes);
                 }
             });
         });
@@ -1109,28 +1225,27 @@ impl PaintApp {
             return;
         };
 
+        let t = *self.texts();
         let mut choice: Option<u8> = None;
         let response =
             egui::Modal::new(egui::Id::unique("modifiche_non_salvate")).show(ctx, |ui| {
-                ui.set_width(340.0);
-                ui.label(RichText::new("Modifiche non salvate").strong());
+                ui.set_width(360.0);
+                ui.label(RichText::new(t.confirm_title).strong());
                 ui.add_space(4.0);
-                let action = match pending {
-                    PendingAction::New => "Creare un nuovo foglio",
-                    PendingAction::Open => "Aprire un'altra immagine",
+                let message = match pending {
+                    PendingAction::New => t.confirm_new,
+                    PendingAction::Open => t.confirm_open,
                 };
-                ui.label(format!(
-                    "{action} farà perdere le modifiche non salvate del foglio attuale."
-                ));
+                ui.label(message);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Salva e continua").clicked() {
+                    if ui.button(t.confirm_save).clicked() {
                         choice = Some(0);
                     }
-                    if ui.button("Scarta").clicked() {
+                    if ui.button(t.confirm_discard).clicked() {
                         choice = Some(1);
                     }
-                    if ui.button("Annulla").clicked() {
+                    if ui.button(t.confirm_cancel).clicked() {
                         choice = Some(2);
                     }
                 });
@@ -1197,6 +1312,7 @@ impl eframe::App for PaintApp {
             .show(ui, |ui| self.layers_panel(ui));
         egui::CentralPanel::default().show(ui, |ui| self.canvas(ui));
 
+        self.settings_window(ui.ctx());
         self.confirm_dialog(ui.ctx());
     }
 }
@@ -1209,18 +1325,16 @@ fn file_name(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn load_image(path: &std::path::Path) -> Result<ColorImage, String> {
-    let decoded = image::open(path).map_err(|e| format!("Impossibile aprire l'immagine: {e}"))?;
+fn load_image(path: &std::path::Path, texts: &Texts) -> Result<ColorImage, String> {
+    let decoded = image::open(path).map_err(|e| texts.err_opening(e))?;
     let rgba = decoded.to_rgba8();
     let (width, height) = (rgba.width() as usize, rgba.height() as usize);
 
     if width == 0 || height == 0 {
-        return Err("L'immagine è vuota".to_owned());
+        return Err(texts.err_empty.to_owned());
     }
     if width > MAX_DIMENSION || height > MAX_DIMENSION {
-        return Err(format!(
-            "Immagine troppo grande ({width} × {height} px, massimo {MAX_DIMENSION} px per lato)"
-        ));
+        return Err(texts.err_too_large(width, height, MAX_DIMENSION));
     }
 
     let pixels = rgba
@@ -1231,7 +1345,7 @@ fn load_image(path: &std::path::Path) -> Result<ColorImage, String> {
     Ok(ColorImage::new([width, height], pixels))
 }
 
-fn save_png(image: &ColorImage, path: &std::path::Path) -> Result<(), String> {
+fn save_png(image: &ColorImage, path: &std::path::Path, texts: &Texts) -> Result<(), String> {
     let [w, h] = image.size;
     let mut buffer = Vec::with_capacity(w * h * 4);
     for pixel in &image.pixels {
@@ -1245,5 +1359,5 @@ fn save_png(image: &ColorImage, path: &std::path::Path) -> Result<(), String> {
         h as u32,
         image::ExtendedColorType::Rgba8,
     )
-    .map_err(|e| format!("Salvataggio non riuscito: {e}"))
+    .map_err(|e| texts.err_saving(e))
 }
