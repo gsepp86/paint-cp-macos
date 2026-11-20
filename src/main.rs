@@ -1,6 +1,7 @@
 //! PaintCP — un semplice programma di disegno per macOS, scritto in Rust.
 
 mod app;
+mod i18n;
 mod paint;
 
 fn main() -> eframe::Result<()> {
