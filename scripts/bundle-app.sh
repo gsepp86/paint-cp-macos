@@ -5,12 +5,12 @@
 # Esempio: ./scripts/bundle-app.sh target/release/paintcp target
 #
 # Variabili opzionali:
-#   PAINTCP_VERSION  versione scritta in Info.plist (default 0.1.0)
+#   PAINTCP_VERSION  versione scritta in Info.plist (default 1.0.0)
 set -euo pipefail
 
 BINARY="${1:?uso: bundle-app.sh <percorso-binario> [cartella-output]}"
 OUT_DIR="${2:-target}"
-VERSION="${PAINTCP_VERSION:-0.1.0}"
+VERSION="${PAINTCP_VERSION:-1.0.0}"
 
 if [ ! -x "$BINARY" ]; then
     echo "Errore: binario non trovato o non eseguibile: $BINARY" >&2
